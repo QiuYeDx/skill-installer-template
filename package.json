@@ -1,0 +1,32 @@
+{
+  "name": "skill-installer-template",
+  "version": "1.0.0",
+  "description": "通用 AI Skill 安装器模板 - 快速生成一键安装脚本",
+  "type": "module",
+  "bin": {
+    "skill-installer": "./bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "skill",
+    "installer",
+    "cli",
+    "cursor",
+    "claude",
+    "codex",
+    "gemini"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^7.0.0",
+    "chalk": "^5.4.0",
+    "ora": "^8.1.0",
+    "adm-zip": "^0.5.16"
+  }
+}
