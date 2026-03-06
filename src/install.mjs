@@ -1,4 +1,4 @@
-import { select, confirm } from '@inquirer/prompts';
+import { select, confirm, checkbox } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import AdmZip from 'adm-zip';
@@ -6,16 +6,21 @@ import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 import config from './config.mjs';
-import { getTargets } from './targets.mjs';
+import { targetDefinitions } from './targets.mjs';
 
 const IGNORED_ENTRIES = new Set(['.DS_Store', 'Thumbs.db', '__MACOSX']);
 
 // ─── Banner ──────────────────────────────────────────────────
 
-function printBanner() {
+function printBanner(skills) {
   console.log();
-  console.log(chalk.cyan.bold(`  🚀 ${config.displayName} 安装器`));
-  console.log(chalk.dim(`     ${config.description}`));
+  if (skills.length === 1) {
+    console.log(chalk.cyan.bold(`  🚀 ${skills[0].displayName} 安装器`));
+    console.log(chalk.dim(`     ${skills[0].description}`));
+  } else {
+    console.log(chalk.cyan.bold(`  🚀 Skill Installer`));
+    console.log(chalk.dim(`     即将安装 ${skills.length} 个 Skills`));
+  }
   console.log(chalk.dim(`     ${'─'.repeat(40)}`));
   console.log();
 }
@@ -74,36 +79,64 @@ function extractZip(zipBuffer, targetPath, stripComponents = 0) {
 // ─── CLI Flow ────────────────────────────────────────────────
 
 export async function main() {
-  printBanner();
+  // 归一化配置: 支持 skills 数组或单对象配置
+  const skills = config.skills || (Array.isArray(config) ? config : [config]);
 
-  const targets = getTargets(config.name);
+  printBanner(skills);
 
-  // 1) 选择安装目标
+  // 1) 选择要安装的 Skills (如果配置了多个)
+  let selectedSkills = skills;
+  if (skills.length > 1) {
+    selectedSkills = await checkbox({
+      message: '请选择要安装的 Skill:',
+      choices: skills.map((s) => ({
+        name: `${s.displayName} ${chalk.dim(`(${s.description})`)}`,
+        value: s,
+        checked: true,
+      })),
+      required: true,
+    });
+  }
+
+  // 2) 选择安装目标 (一次选择，应用于所有 Skill)
   const targetId = await select({
-    message: chalk.bold('请选择安装路径:'),
+    message: chalk.bold('请选择安装路径 (将应用于所有选中的 Skill):'),
     choices: [
       {
         value: 'all',
-        name: `${chalk.yellow('✨')} 全部安装 ${chalk.dim(`(${targets.length} 个路径)`)}`,
+        name: `${chalk.yellow('✨')} 全部安装 ${chalk.dim(`(${targetDefinitions.length} 个路径)`)}`,
       },
-      ...targets.map((t) => ({
+      ...targetDefinitions.map((t) => ({
         value: t.id,
-        name: `${t.label}  ${chalk.dim(t.path)}`,
+        name: t.label,
       })),
     ],
   });
 
-  const selectedTargets =
-    targetId === 'all' ? targets : targets.filter((t) => t.id === targetId);
+  const selectedTargetDefs =
+    targetId === 'all'
+      ? targetDefinitions
+      : targetDefinitions.filter((t) => t.id === targetId);
 
-  // 2) 检查已有安装
-  const existingTargets = selectedTargets.filter((t) => existsSync(t.path));
+  // 3) 检查已有安装
+  const conflicts = [];
+  for (const skill of selectedSkills) {
+    for (const targetDef of selectedTargetDefs) {
+      const path = targetDef.getPath(skill.name);
+      if (existsSync(path)) {
+        conflicts.push({ skill, targetDef, path });
+      }
+    }
+  }
 
-  if (existingTargets.length > 0) {
+  if (conflicts.length > 0) {
     console.log();
-    console.log(chalk.yellow('  ⚠️  以下路径已存在该 Skill:'));
-    for (const t of existingTargets) {
-      console.log(chalk.yellow(`     • ${t.label}`) + chalk.dim(` ${t.path}`));
+    console.log(chalk.yellow('  ⚠️  以下路径已存在对应 Skill:'));
+    for (const c of conflicts) {
+      console.log(
+        chalk.yellow(`     • [${c.skill.displayName}] -> ${c.targetDef.label}`) +
+          chalk.dim(` ${c.path}`)
+      );
     }
     console.log();
 
@@ -118,25 +151,42 @@ export async function main() {
     }
   }
 
-  // 3) 下载并安装
+  // 4) 下载并安装
   console.log();
-  const spinner = ora({ text: '正在下载资产包...', color: 'cyan' }).start();
+  const spinner = ora({ text: '准备安装...', color: 'cyan' }).start();
 
-  const zipBuffer = await downloadZip(config.assetUrl);
+  try {
+    for (let i = 0; i < selectedSkills.length; i++) {
+      const skill = selectedSkills[i];
+      const prefix = `[${i + 1}/${selectedSkills.length}] ${skill.displayName}`;
 
-  for (let i = 0; i < selectedTargets.length; i++) {
-    const target = selectedTargets[i];
-    spinner.text = `[${i + 1}/${selectedTargets.length}] 正在安装到 ${target.label}...`;
-    extractZip(zipBuffer, target.path, config.stripComponents);
+      spinner.text = `${prefix}: 正在下载...`;
+      // 注意: 实际项目中可能需要并发下载或缓存，这里保持简单串行
+      const zipBuffer = await downloadZip(skill.assetUrl);
+
+      for (const targetDef of selectedTargetDefs) {
+        const targetPath = targetDef.getPath(skill.name);
+        spinner.text = `${prefix}: 安装到 ${targetDef.label}...`;
+        extractZip(zipBuffer, targetPath, skill.stripComponents);
+      }
+    }
+    spinner.succeed(chalk.green('所有安装完成!'));
+  } catch (err) {
+    spinner.fail(chalk.red('安装过程中发生错误'));
+    throw err;
   }
 
-  spinner.succeed(chalk.green('安装完成!'));
-
-  // 4) 展示结果
+  // 5) 展示结果
   console.log();
-  console.log(chalk.bold('  已安装到:'));
-  for (const t of selectedTargets) {
-    console.log(chalk.green(`    ✓ ${t.label}`) + chalk.dim(` → ${t.path}`));
+  console.log(chalk.bold('  已安装:'));
+  for (const skill of selectedSkills) {
+    console.log(chalk.cyan(`    📦 ${skill.displayName}`));
+    for (const targetDef of selectedTargetDefs) {
+      console.log(
+        chalk.green(`       ✓ ${targetDef.label}`) +
+          chalk.dim(` → ${targetDef.getPath(skill.name)}`)
+      );
+    }
   }
   console.log();
 }
