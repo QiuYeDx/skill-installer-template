@@ -38,7 +38,7 @@ export function getTargets(skillName) {
     {
       id: 'codex',
       label: '📦 Codex',
-      path: join(home, '.codex', 'skills', skillName),
+      path: join(home, '.agents', 'skills', skillName),
     },
   ];
 }

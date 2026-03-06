@@ -155,7 +155,7 @@ npx @your-scope/install-element-plus-skill
 - Cursor（全局）：`~/.cursor/skills/<skillName>`
 - Claude Code：`~/.claude/skills/<skillName>`
 - Gemini CLI：`~/.gemini/skills/<skillName>`
-- Codex：`~/.codex/skills/<skillName>`
+- Codex：`~/.agents/skills/<skillName>`
 
 如需新增/删减目标平台，直接编辑 `src/targets.mjs` 的返回数组即可。
 
