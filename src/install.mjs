@@ -120,6 +120,8 @@ export async function main() {
 
   // 3) 检查已有安装
   const conflicts = [];
+  const skipSet = new Set();
+
   for (const skill of selectedSkills) {
     for (const targetDef of selectedTargetDefs) {
       const path = targetDef.getPath(skill.name);
@@ -146,25 +148,45 @@ export async function main() {
     });
 
     if (!overwrite) {
-      console.log(chalk.dim('\n  已取消安装。\n'));
-      return;
+      for (const c of conflicts) {
+        skipSet.add(`${c.skill.name}::${c.targetDef.id}`);
+      }
+
+      const hasRemaining = selectedSkills.some((skill) =>
+        selectedTargetDefs.some((td) => !skipSet.has(`${skill.name}::${td.id}`))
+      );
+
+      if (!hasRemaining) {
+        console.log(chalk.dim('\n  所有选中的 Skill 均已存在，已跳过安装。\n'));
+        return;
+      }
+
+      console.log(chalk.dim('\n  已跳过已存在的 Skill，继续安装其余部分...\n'));
     }
   }
 
   // 4) 下载并安装
+  const installTasks = selectedSkills
+    .map((skill) => ({
+      skill,
+      targets: selectedTargetDefs.filter(
+        (td) => !skipSet.has(`${skill.name}::${td.id}`)
+      ),
+    }))
+    .filter((task) => task.targets.length > 0);
+
   console.log();
   const spinner = ora({ text: '准备安装...', color: 'cyan' }).start();
 
   try {
-    for (let i = 0; i < selectedSkills.length; i++) {
-      const skill = selectedSkills[i];
-      const prefix = `[${i + 1}/${selectedSkills.length}] ${skill.displayName}`;
+    for (let i = 0; i < installTasks.length; i++) {
+      const { skill, targets } = installTasks[i];
+      const prefix = `[${i + 1}/${installTasks.length}] ${skill.displayName}`;
 
       spinner.text = `${prefix}: 正在下载...`;
-      // 注意: 实际项目中可能需要并发下载或缓存，这里保持简单串行
       const zipBuffer = await downloadZip(skill.assetUrl);
 
-      for (const targetDef of selectedTargetDefs) {
+      for (const targetDef of targets) {
         const targetPath = targetDef.getPath(skill.name);
         spinner.text = `${prefix}: 安装到 ${targetDef.label}...`;
         extractZip(zipBuffer, targetPath, skill.stripComponents);
@@ -178,14 +200,27 @@ export async function main() {
 
   // 5) 展示结果
   console.log();
-  console.log(chalk.bold('  已安装:'));
-  for (const skill of selectedSkills) {
-    console.log(chalk.cyan(`    📦 ${skill.displayName}`));
-    for (const targetDef of selectedTargetDefs) {
-      console.log(
-        chalk.green(`       ✓ ${targetDef.label}`) +
-          chalk.dim(` → ${targetDef.getPath(skill.name)}`)
-      );
+  if (installTasks.length > 0) {
+    console.log(chalk.bold('  已安装:'));
+    for (const { skill, targets } of installTasks) {
+      console.log(chalk.cyan(`    📦 ${skill.displayName}`));
+      for (const targetDef of targets) {
+        console.log(
+          chalk.green(`       ✓ ${targetDef.label}`) +
+            chalk.dim(` → ${targetDef.getPath(skill.name)}`)
+        );
+      }
+    }
+  }
+
+  if (skipSet.size > 0) {
+    console.log(chalk.dim('  已跳过 (已存在):'));
+    for (const c of conflicts) {
+      if (skipSet.has(`${c.skill.name}::${c.targetDef.id}`)) {
+        console.log(
+          chalk.dim(`    ⊘ [${c.skill.displayName}] -> ${c.targetDef.label}`)
+        );
+      }
     }
   }
   console.log();
